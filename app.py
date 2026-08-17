@@ -97,6 +97,15 @@ st.markdown("""
         border: 1px solid #dee2e6;
         margin-bottom: 1rem;
     }
+    .file-uploaded {
+        background-color: #d4edda;
+        padding: 0.25rem 0.5rem;
+        border-radius: 4px;
+        color: #155724;
+        font-size: 0.85rem;
+        display: inline-block;
+        margin-top: 0.25rem;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -252,7 +261,8 @@ class EWPProcessor:
                 return self._fallback_processing(file_content, filename)
             
             # Save to temporary file
-            with tempfile.NamedTemporaryFile(delete=False, suffix=Path(filename).suffix) as tmp_file:
+            suffix = Path(filename).suffix.lower()
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
                 tmp_file.write(file_content)
                 tmp_path = tmp_file.name
             
@@ -277,7 +287,10 @@ class EWPProcessor:
                 logger.warning(f"OCR processing failed, using fallback: {e}")
                 parsed_data = self._fallback_processing(file_content, filename)
             finally:
-                os.unlink(tmp_path)
+                try:
+                    os.unlink(tmp_path)
+                except:
+                    pass
             
             self.data = parsed_data
             return parsed_data
@@ -290,7 +303,6 @@ class EWPProcessor:
         """Fallback processing when OCR is not available"""
         logger.info("Using fallback EWP processing")
         
-        # Extract metadata from filename
         parsed = {
             'olt_configurations': [],
             'ports': [],
@@ -303,20 +315,24 @@ class EWPProcessor:
         }
         
         # Try to extract info from filename
-        name_parts = filename.split('_')
+        name_parts = filename.replace('_', ' ').replace('-', ' ').split()
         for part in name_parts:
-            if 'OLT' in part.upper():
-                parsed['olt_configurations'].append({'identifier': part})
-            if 'VLAN' in part.upper() or 'VLAN' in part:
-                vlan_match = re.search(r'VLAN[-\s]*(\d+)', part, re.IGNORECASE)
+            part_upper = part.upper()
+            if 'OLT' in part_upper:
+                olt_match = re.search(r'OLT[-\s]*(\d+)', part_upper)
+                if olt_match:
+                    parsed['olt_configurations'].append({'OLT': olt_match.group(1)})
+                else:
+                    parsed['olt_configurations'].append({'identifier': part})
+            if 'VLAN' in part_upper:
+                vlan_match = re.search(r'VLAN[-\s]*(\d+)', part_upper)
                 if vlan_match:
                     parsed['vlans'].append(vlan_match.group(1))
-            if 'PORT' in part.upper():
-                port_match = re.search(r'PORT[-\s]*(\d+)', part, re.IGNORECASE)
+            if 'PORT' in part_upper:
+                port_match = re.search(r'PORT[-\s]*(\d+)', part_upper)
                 if port_match:
                     parsed['ports'].append(port_match.group(1))
         
-        # Generate summary
         parsed['summary'] = {
             'total_olt_configs': len(parsed['olt_configurations']),
             'total_ports': len(parsed['ports']),
@@ -652,7 +668,7 @@ class DifferenceAnalyzer:
         ewp_olts = set()
         for cfg in site1.ewp_data.get('olt_configurations', []):
             for value in cfg.values():
-                if 'OLT' in value or 'PON' in value:
+                if isinstance(value, str) and ('OLT' in value or 'PON' in value):
                     ewp_olts.add(value)
         
         missing_in_ewp = fio_olts - ewp_olts
@@ -834,13 +850,6 @@ class ReportGenerator:
         return output
 
 
-def get_download_link(file_content: bytes, filename: str, file_type: str) -> str:
-    """Generate a download link for a file"""
-    b64 = base64.b64encode(file_content).decode()
-    href = f'<a href="data:{file_type};base64,{b64}" download="{filename}">Download {filename}</a>'
-    return href
-
-
 def main():
     """Main Streamlit application"""
     
@@ -893,9 +902,19 @@ def main():
         with st.container():
             st.markdown('<div class="upload-section">', unsafe_allow_html=True)
             site1_name = st.text_input("Site Name", value="Site A", key="site1_name")
+            
             site1_fio = st.file_uploader("FIO File (Excel)", type=['xlsx', 'xls'], key="site1_fio")
+            if site1_fio:
+                st.markdown(f'<span class="file-uploaded">✅ {site1_fio.name} ({site1_fio.size/1024:.1f}KB)</span>', unsafe_allow_html=True)
+            
             site1_ewp = st.file_uploader("EWP File (Image)", type=['png', 'jpg', 'jpeg', 'tiff', 'bmp'], key="site1_ewp")
+            if site1_ewp:
+                st.markdown(f'<span class="file-uploaded">✅ {site1_ewp.name} ({site1_ewp.size/1024:.1f}KB)</span>', unsafe_allow_html=True)
+            
             site1_mop = st.file_uploader("MOP File (Word)", type=['docx'], key="site1_mop")
+            if site1_mop:
+                st.markdown(f'<span class="file-uploaded">✅ {site1_mop.name} ({site1_mop.size/1024:.1f}KB)</span>', unsafe_allow_html=True)
+            
             st.markdown('</div>', unsafe_allow_html=True)
     
     with col2:
@@ -903,9 +922,19 @@ def main():
         with st.container():
             st.markdown('<div class="upload-section">', unsafe_allow_html=True)
             site2_name = st.text_input("Site Name", value="Site B", key="site2_name")
+            
             site2_fio = st.file_uploader("FIO File (Excel)", type=['xlsx', 'xls'], key="site2_fio")
+            if site2_fio:
+                st.markdown(f'<span class="file-uploaded">✅ {site2_fio.name} ({site2_fio.size/1024:.1f}KB)</span>', unsafe_allow_html=True)
+            
             site2_ewp = st.file_uploader("EWP File (Image)", type=['png', 'jpg', 'jpeg', 'tiff', 'bmp'], key="site2_ewp")
+            if site2_ewp:
+                st.markdown(f'<span class="file-uploaded">✅ {site2_ewp.name} ({site2_ewp.size/1024:.1f}KB)</span>', unsafe_allow_html=True)
+            
             site2_mop = st.file_uploader("MOP File (Word)", type=['docx'], key="site2_mop")
+            if site2_mop:
+                st.markdown(f'<span class="file-uploaded">✅ {site2_mop.name} ({site2_mop.size/1024:.1f}KB)</span>', unsafe_allow_html=True)
+            
             st.markdown('</div>', unsafe_allow_html=True)
     
     # Analyze button
@@ -915,8 +944,30 @@ def main():
     
     # Process when analyze is clicked
     if analyze_clicked:
-        if not all([site1_fio, site1_ewp, site1_mop, site2_fio, site2_ewp, site2_mop]):
+        # Check if all files are uploaded
+        files_uploaded = all([
+            site1_fio is not None,
+            site1_ewp is not None,
+            site1_mop is not None,
+            site2_fio is not None,
+            site2_ewp is not None,
+            site2_mop is not None
+        ])
+        
+        if not files_uploaded:
             st.error("⚠️ Please upload all required files for both sites")
+            
+            # Show which files are missing
+            missing = []
+            if site1_fio is None: missing.append("Site 1 FIO")
+            if site1_ewp is None: missing.append("Site 1 EWP")
+            if site1_mop is None: missing.append("Site 1 MOP")
+            if site2_fio is None: missing.append("Site 2 FIO")
+            if site2_ewp is None: missing.append("Site 2 EWP")
+            if site2_mop is None: missing.append("Site 2 MOP")
+            
+            if missing:
+                st.warning(f"Missing files: {', '.join(missing)}")
         else:
             with st.spinner("Processing files and analyzing differences..."):
                 try:
@@ -929,16 +980,19 @@ def main():
                     
                     # Process Site 1
                     progress_bar = st.progress(0)
-                    st.text("Processing Site 1...")
+                    status_text = st.empty()
                     
+                    status_text.text("Processing Site 1 FIO...")
                     fio1_data = fio_processor.process_file(site1_fio.getvalue(), site1_fio.name)
-                    progress_bar.progress(25)
+                    progress_bar.progress(15)
                     
+                    status_text.text("Processing Site 1 EWP...")
                     ewp1_data = ewp_processor.process_file(site1_ewp.getvalue(), site1_ewp.name)
-                    progress_bar.progress(50)
+                    progress_bar.progress(30)
                     
+                    status_text.text("Processing Site 1 MOP...")
                     mop1_data = mop_processor.process_file(site1_mop.getvalue(), site1_mop.name)
-                    progress_bar.progress(75)
+                    progress_bar.progress(45)
                     
                     site1_data = SiteData(
                         site_name=site1_name,
@@ -951,11 +1005,17 @@ def main():
                     )
                     
                     # Process Site 2
-                    st.text("Processing Site 2...")
-                    
+                    status_text.text("Processing Site 2 FIO...")
                     fio2_data = fio_processor.process_file(site2_fio.getvalue(), site2_fio.name)
+                    progress_bar.progress(60)
+                    
+                    status_text.text("Processing Site 2 EWP...")
                     ewp2_data = ewp_processor.process_file(site2_ewp.getvalue(), site2_ewp.name)
+                    progress_bar.progress(75)
+                    
+                    status_text.text("Processing Site 2 MOP...")
                     mop2_data = mop_processor.process_file(site2_mop.getvalue(), site2_mop.name)
+                    progress_bar.progress(90)
                     
                     site2_data = SiteData(
                         site_name=site2_name,
@@ -968,12 +1028,12 @@ def main():
                     )
                     
                     # Analyze differences
-                    st.text("Analyzing differences...")
+                    status_text.text("Analyzing differences...")
                     differences = analyzer.analyze(site1_data, site2_data)
                     summary = report_generator.generate_summary(differences, site1_name, site2_name)
                     
                     progress_bar.progress(100)
-                    st.success("✅ Analysis complete!")
+                    status_text.text("✅ Analysis complete!")
                     
                     # Store results in session state
                     st.session_state['differences'] = differences
@@ -982,6 +1042,9 @@ def main():
                     st.session_state['site2_name'] = site2_name
                     st.session_state['site1_data'] = site1_data
                     st.session_state['site2_data'] = site2_data
+                    st.session_state['analysis_complete'] = True
+                    
+                    st.success("✅ Analysis complete! Scroll down to see results.")
                     
                     if not TESSERACT_AVAILABLE:
                         st.info("ℹ️ Note: EWP images were processed using fallback mode (filename metadata only). Install Tesseract for full OCR capabilities.")
@@ -991,7 +1054,7 @@ def main():
                     st.exception(e)
     
     # Display results if available
-    if 'differences' in st.session_state:
+    if st.session_state.get('analysis_complete', False):
         differences = st.session_state['differences']
         summary = st.session_state['summary']
         site1_name = st.session_state['site1_name']
@@ -1085,11 +1148,12 @@ def main():
                             differences, site1_name, site2_name
                         )
                         st.download_button(
-                            label="Download Excel Report",
+                            label="📥 Download Excel Report",
                             data=excel_bytes,
                             file_name=f"olt_mop_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            use_container_width=True
+                            use_container_width=True,
+                            key="excel_download"
                         )
                         st.success("✅ Excel report ready!")
                     except Exception as e:
@@ -1102,11 +1166,12 @@ def main():
                         report_gen = ReportGenerator()
                         pdf_bytes = report_gen.generate_pdf_report(differences, summary)
                         st.download_button(
-                            label="Download PDF Report",
+                            label="📥 Download PDF Report",
                             data=pdf_bytes,
                             file_name=f"olt_mop_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
                             mime="application/pdf",
-                            use_container_width=True
+                            use_container_width=True,
+                            key="pdf_download"
                         )
                         st.success("✅ PDF report ready!")
                     except Exception as e:
