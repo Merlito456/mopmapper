@@ -901,17 +901,19 @@ def main():
         st.markdown("### 📍 Site 1")
         with st.container():
             st.markdown('<div class="upload-section">', unsafe_allow_html=True)
-            site1_name = st.text_input("Site Name", value="Site A", key="site1_name")
             
-            site1_fio = st.file_uploader("FIO File (Excel)", type=['xlsx', 'xls'], key="site1_fio")
+            # Use unique keys for widgets and separate state variables
+            site1_name = st.text_input("Site Name", value="Site A", key="input_site1_name")
+            
+            site1_fio = st.file_uploader("FIO File (Excel)", type=['xlsx', 'xls'], key="input_site1_fio")
             if site1_fio:
                 st.markdown(f'<span class="file-uploaded">✅ {site1_fio.name} ({site1_fio.size/1024:.1f}KB)</span>', unsafe_allow_html=True)
             
-            site1_ewp = st.file_uploader("EWP File (Image)", type=['png', 'jpg', 'jpeg', 'tiff', 'bmp'], key="site1_ewp")
+            site1_ewp = st.file_uploader("EWP File (Image)", type=['png', 'jpg', 'jpeg', 'tiff', 'bmp'], key="input_site1_ewp")
             if site1_ewp:
                 st.markdown(f'<span class="file-uploaded">✅ {site1_ewp.name} ({site1_ewp.size/1024:.1f}KB)</span>', unsafe_allow_html=True)
             
-            site1_mop = st.file_uploader("MOP File (Word)", type=['docx'], key="site1_mop")
+            site1_mop = st.file_uploader("MOP File (Word)", type=['docx'], key="input_site1_mop")
             if site1_mop:
                 st.markdown(f'<span class="file-uploaded">✅ {site1_mop.name} ({site1_mop.size/1024:.1f}KB)</span>', unsafe_allow_html=True)
             
@@ -921,17 +923,18 @@ def main():
         st.markdown("### 📍 Site 2")
         with st.container():
             st.markdown('<div class="upload-section">', unsafe_allow_html=True)
-            site2_name = st.text_input("Site Name", value="Site B", key="site2_name")
             
-            site2_fio = st.file_uploader("FIO File (Excel)", type=['xlsx', 'xls'], key="site2_fio")
+            site2_name = st.text_input("Site Name", value="Site B", key="input_site2_name")
+            
+            site2_fio = st.file_uploader("FIO File (Excel)", type=['xlsx', 'xls'], key="input_site2_fio")
             if site2_fio:
                 st.markdown(f'<span class="file-uploaded">✅ {site2_fio.name} ({site2_fio.size/1024:.1f}KB)</span>', unsafe_allow_html=True)
             
-            site2_ewp = st.file_uploader("EWP File (Image)", type=['png', 'jpg', 'jpeg', 'tiff', 'bmp'], key="site2_ewp")
+            site2_ewp = st.file_uploader("EWP File (Image)", type=['png', 'jpg', 'jpeg', 'tiff', 'bmp'], key="input_site2_ewp")
             if site2_ewp:
                 st.markdown(f'<span class="file-uploaded">✅ {site2_ewp.name} ({site2_ewp.size/1024:.1f}KB)</span>', unsafe_allow_html=True)
             
-            site2_mop = st.file_uploader("MOP File (Word)", type=['docx'], key="site2_mop")
+            site2_mop = st.file_uploader("MOP File (Word)", type=['docx'], key="input_site2_mop")
             if site2_mop:
                 st.markdown(f'<span class="file-uploaded">✅ {site2_mop.name} ({site2_mop.size/1024:.1f}KB)</span>', unsafe_allow_html=True)
             
@@ -1035,30 +1038,36 @@ def main():
                     progress_bar.progress(100)
                     status_text.text("✅ Analysis complete!")
                     
-                    # Store results in session state
-                    st.session_state['differences'] = differences
-                    st.session_state['summary'] = summary
-                    st.session_state['site1_name'] = site1_name
-                    st.session_state['site2_name'] = site2_name
-                    st.session_state['site1_data'] = site1_data
-                    st.session_state['site2_data'] = site2_data
-                    st.session_state['analysis_complete'] = True
+                    # Store results in session state using unique keys
+                    st.session_state['analysis_results'] = {
+                        'differences': differences,
+                        'summary': summary,
+                        'site1_name': site1_name,
+                        'site2_name': site2_name,
+                        'site1_data': site1_data,
+                        'site2_data': site2_data,
+                        'analysis_complete': True
+                    }
                     
                     st.success("✅ Analysis complete! Scroll down to see results.")
                     
                     if not TESSERACT_AVAILABLE:
                         st.info("ℹ️ Note: EWP images were processed using fallback mode (filename metadata only). Install Tesseract for full OCR capabilities.")
                     
+                    # Rerun to display results
+                    st.rerun()
+                    
                 except Exception as e:
                     st.error(f"❌ Error: {str(e)}")
                     st.exception(e)
     
     # Display results if available
-    if st.session_state.get('analysis_complete', False):
-        differences = st.session_state['differences']
-        summary = st.session_state['summary']
-        site1_name = st.session_state['site1_name']
-        site2_name = st.session_state['site2_name']
+    if 'analysis_results' in st.session_state and st.session_state['analysis_results'].get('analysis_complete', False):
+        results = st.session_state['analysis_results']
+        differences = results['differences']
+        summary = results['summary']
+        site1_name = results['site1_name']
+        site2_name = results['site2_name']
         
         # Summary metrics
         st.markdown("---")
@@ -1115,23 +1124,23 @@ def main():
             
             with tab1:
                 st.markdown(f"**{site1_name} FIO**")
-                st.json(st.session_state['site1_data'].fio_data)
+                st.json(results['site1_data'].fio_data)
                 st.markdown(f"**{site2_name} FIO**")
-                st.json(st.session_state['site2_data'].fio_data)
+                st.json(results['site2_data'].fio_data)
             
             with tab2:
                 st.markdown(f"**{site1_name} EWP**")
-                st.json(st.session_state['site1_data'].ewp_data)
-                if not st.session_state['site1_data'].ewp_data.get('ocr_available', True):
+                st.json(results['site1_data'].ewp_data)
+                if not results['site1_data'].ewp_data.get('ocr_available', True):
                     st.info("⚠️ EWP processed in fallback mode (OCR not available)")
                 st.markdown(f"**{site2_name} EWP**")
-                st.json(st.session_state['site2_data'].ewp_data)
+                st.json(results['site2_data'].ewp_data)
             
             with tab3:
                 st.markdown(f"**{site1_name} MOP**")
-                st.json(st.session_state['site1_data'].mop_data)
+                st.json(results['site1_data'].mop_data)
                 st.markdown(f"**{site2_name} MOP**")
-                st.json(st.session_state['site2_data'].mop_data)
+                st.json(results['site2_data'].mop_data)
         
         # Report generation
         st.markdown("---")
@@ -1176,6 +1185,14 @@ def main():
                         st.success("✅ PDF report ready!")
                     except Exception as e:
                         st.error(f"Error generating PDF report: {e}")
+    
+    # Clear results button
+    if 'analysis_results' in st.session_state:
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            if st.button("🔄 Clear Results", use_container_width=True):
+                st.session_state.pop('analysis_results', None)
+                st.rerun()
     
     # Footer
     st.markdown("---")
