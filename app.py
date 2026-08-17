@@ -8,7 +8,7 @@ import pandas as pd
 import numpy as np
 import os
 import json
-import hashlib
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
@@ -23,16 +23,22 @@ from io import BytesIO
 import openpyxl
 from docx import Document
 from docx.table import Table
+from PIL import Image
 import cv2
 import numpy as np
-import pytesseract
-from PIL import Image
-import re
+
+# Try to import pytesseract, but handle gracefully
+try:
+    import pytesseract
+    TESSERACT_AVAILABLE = True
+except ImportError:
+    TESSERACT_AVAILABLE = False
+    pytesseract = None
 
 # Report generation
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter, landscape
-from reportlab.platypus import SimpleDocTemplate, Table as RLTable, TableStyle, Paragraph, Spacer, PageBreak
+from reportlab.platypus import SimpleDocTemplate, Table as RLTable, TableStyle, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 
@@ -64,28 +70,25 @@ st.markdown("""
         padding: 0.5rem;
         border-radius: 5px;
         border-left: 5px solid #ff0000;
+        margin-bottom: 0.5rem;
     }
     .diff-warning {
         background-color: #ffe6cc;
         padding: 0.5rem;
         border-radius: 5px;
         border-left: 5px solid #ff9900;
+        margin-bottom: 0.5rem;
     }
     .diff-info {
         background-color: #d4edda;
         padding: 0.5rem;
         border-radius: 5px;
         border-left: 5px solid #28a745;
+        margin-bottom: 0.5rem;
     }
     .stButton > button {
         width: 100%;
-        background-color: #0066cc;
-        color: white;
         font-weight: bold;
-    }
-    .stButton > button:hover {
-        background-color: #004d99;
-        color: white;
     }
     .upload-section {
         background-color: #f8f9fa;
@@ -93,27 +96,6 @@ st.markdown("""
         border-radius: 10px;
         border: 1px solid #dee2e6;
         margin-bottom: 1rem;
-    }
-    .result-card {
-        background-color: white;
-        padding: 1rem;
-        border-radius: 10px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        margin-bottom: 1rem;
-    }
-    .metric-card {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        padding: 1rem;
-        border-radius: 10px;
-        text-align: center;
-    }
-    .metric-card-success {
-        background: linear-gradient(135deg, #84fab0 0%, #8fd3f4 100%);
-        color: #333;
-        padding: 1rem;
-        border-radius: 10px;
-        text-align: center;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -254,45 +236,96 @@ class FIOProcessor:
 
 
 class EWPProcessor:
-    """Processes EWP Image files using OCR"""
+    """Processes EWP Image files using OCR with fallback"""
     
     def __init__(self):
         self.data = {}
         self.tesseract_config = '--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-/:.'
     
     def process_file(self, file_content: bytes, filename: str) -> Dict[str, Any]:
-        """Extract structured data from EWP image using OCR"""
+        """Extract structured data from EWP image using OCR or fallback"""
         try:
             logger.info(f"Processing EWP file: {filename}")
+            
+            # Check if Tesseract is available
+            if not TESSERACT_AVAILABLE:
+                return self._fallback_processing(file_content, filename)
             
             # Save to temporary file
             with tempfile.NamedTemporaryFile(delete=False, suffix=Path(filename).suffix) as tmp_file:
                 tmp_file.write(file_content)
                 tmp_path = tmp_file.name
             
-            # Read image
-            img = cv2.imread(tmp_path)
-            if img is None:
-                img = Image.open(tmp_path)
-                img = np.array(img)
-            
-            os.unlink(tmp_path)
-            
-            # Preprocess image
-            processed_img = self._preprocess_image(img)
-            
-            # Extract text using OCR
-            text = pytesseract.image_to_string(processed_img, config=self.tesseract_config)
-            
-            # Parse the extracted text
-            parsed_data = self._parse_ewp_text(text)
+            try:
+                # Try OpenCV
+                img = cv2.imread(tmp_path)
+                if img is None:
+                    # Fallback to PIL
+                    img = Image.open(tmp_path)
+                    img = np.array(img)
+                
+                # Preprocess image
+                processed_img = self._preprocess_image(img)
+                
+                # Extract text using OCR
+                text = pytesseract.image_to_string(processed_img, config=self.tesseract_config)
+                
+                # Parse the extracted text
+                parsed_data = self._parse_ewp_text(text)
+                
+            except Exception as e:
+                logger.warning(f"OCR processing failed, using fallback: {e}")
+                parsed_data = self._fallback_processing(file_content, filename)
+            finally:
+                os.unlink(tmp_path)
             
             self.data = parsed_data
             return parsed_data
             
         except Exception as e:
             logger.error(f"Error processing EWP file: {e}")
-            raise
+            return self._fallback_processing(file_content, filename)
+    
+    def _fallback_processing(self, file_content: bytes, filename: str) -> Dict[str, Any]:
+        """Fallback processing when OCR is not available"""
+        logger.info("Using fallback EWP processing")
+        
+        # Extract metadata from filename
+        parsed = {
+            'olt_configurations': [],
+            'ports': [],
+            'vlans': [],
+            'services': [],
+            'raw_text': f"EWP Image: {filename}",
+            'filename': filename,
+            'file_size': len(file_content),
+            'ocr_available': False
+        }
+        
+        # Try to extract info from filename
+        name_parts = filename.split('_')
+        for part in name_parts:
+            if 'OLT' in part.upper():
+                parsed['olt_configurations'].append({'identifier': part})
+            if 'VLAN' in part.upper() or 'VLAN' in part:
+                vlan_match = re.search(r'VLAN[-\s]*(\d+)', part, re.IGNORECASE)
+                if vlan_match:
+                    parsed['vlans'].append(vlan_match.group(1))
+            if 'PORT' in part.upper():
+                port_match = re.search(r'PORT[-\s]*(\d+)', part, re.IGNORECASE)
+                if port_match:
+                    parsed['ports'].append(port_match.group(1))
+        
+        # Generate summary
+        parsed['summary'] = {
+            'total_olt_configs': len(parsed['olt_configurations']),
+            'total_ports': len(parsed['ports']),
+            'total_vlans': len(set(parsed['vlans'])),
+            'total_services': len(set(parsed['services'])),
+            'ocr_available': False
+        }
+        
+        return parsed
     
     def _preprocess_image(self, img: np.ndarray) -> np.ndarray:
         """Preprocess image for better OCR accuracy"""
@@ -314,7 +347,8 @@ class EWPProcessor:
             'ports': [],
             'vlans': [],
             'services': [],
-            'raw_text': text
+            'raw_text': text,
+            'ocr_available': True
         }
         
         current_config = {}
@@ -352,7 +386,8 @@ class EWPProcessor:
             'total_olt_configs': len(parsed['olt_configurations']),
             'total_ports': len(parsed['ports']),
             'total_vlans': len(set(parsed['vlans'])),
-            'total_services': len(set(parsed['services']))
+            'total_services': len(set(parsed['services'])),
+            'ocr_available': True
         }
         
         return parsed
@@ -698,7 +733,6 @@ class ReportGenerator:
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df.to_excel(writer, index=False, sheet_name='Differences')
             
-            # Add summary sheet
             summary_df = pd.DataFrame([
                 ['Total Differences', len(differences)],
                 ['Critical', sum(1 for d in differences if d.severity == 'critical')],
@@ -717,7 +751,6 @@ class ReportGenerator:
         styles = getSampleStyleSheet()
         story = []
         
-        # Title
         title_style = ParagraphStyle(
             'CustomTitle',
             parent=styles['Heading1'],
@@ -727,13 +760,11 @@ class ReportGenerator:
         story.append(Paragraph("OLT MOP Automation - Difference Report", title_style))
         story.append(Spacer(1, 12))
         
-        # Summary
         story.append(Paragraph(f"Generated: {summary['generated_at']}", styles['Normal']))
         story.append(Paragraph(f"Site 1: {summary['site1_name']}", styles['Normal']))
         story.append(Paragraph(f"Site 2: {summary['site2_name']}", styles['Normal']))
         story.append(Spacer(1, 12))
         
-        # Summary statistics
         story.append(Paragraph("Summary Statistics", styles['Heading2']))
         stats_data = [
             ['Total Differences', str(summary['total_differences'])],
@@ -755,7 +786,6 @@ class ReportGenerator:
         story.append(stats_table)
         story.append(Spacer(1, 20))
         
-        # Detailed differences
         story.append(Paragraph("Detailed Differences", styles['Heading2']))
         story.append(Spacer(1, 12))
         
@@ -818,6 +848,10 @@ def main():
     st.markdown('<h1 class="main-header">🔧 OLT MOP Automation Tool</h1>', unsafe_allow_html=True)
     st.markdown('<p class="sub-header">Compare FIO, EWP, and MOP files between two sites</p>', unsafe_allow_html=True)
     
+    # Check Tesseract availability
+    if not TESSERACT_AVAILABLE:
+        st.warning("⚠️ Tesseract OCR is not installed. EWP image processing will use fallback mode (filename parsing only). For full OCR capabilities, install Tesseract OCR.")
+    
     # Sidebar
     with st.sidebar:
         st.image("https://img.icons8.com/color/96/000000/network.png", width=80)
@@ -834,12 +868,15 @@ def main():
         st.markdown("## Features")
         st.markdown("""
         - ✅ Excel (FIO) parsing
-        - ✅ OCR for images (EWP)
+        - ✅ OCR for images (EWP) - optional
         - ✅ Word document parsing (MOP)
         - ✅ Difference analysis
         - ✅ Excel and PDF reports
         - ✅ Cross-reference validation
         """)
+        
+        if not TESSERACT_AVAILABLE:
+            st.info("💡 **OCR Not Available**\n\nEWP images will be processed using filename metadata only. To enable full OCR:\n\n**Ubuntu/Debian:** `sudo apt-get install tesseract-ocr`\n\n**macOS:** `brew install tesseract`")
         
         st.markdown("## Requirements")
         st.markdown("""
@@ -946,6 +983,9 @@ def main():
                     st.session_state['site1_data'] = site1_data
                     st.session_state['site2_data'] = site2_data
                     
+                    if not TESSERACT_AVAILABLE:
+                        st.info("ℹ️ Note: EWP images were processed using fallback mode (filename metadata only). Install Tesseract for full OCR capabilities.")
+                    
                 except Exception as e:
                     st.error(f"❌ Error: {str(e)}")
                     st.exception(e)
@@ -1019,6 +1059,8 @@ def main():
             with tab2:
                 st.markdown(f"**{site1_name} EWP**")
                 st.json(st.session_state['site1_data'].ewp_data)
+                if not st.session_state['site1_data'].ewp_data.get('ocr_available', True):
+                    st.info("⚠️ EWP processed in fallback mode (OCR not available)")
                 st.markdown(f"**{site2_name} EWP**")
                 st.json(st.session_state['site2_data'].ewp_data)
             
@@ -1080,11 +1122,4 @@ def main():
 
 
 if __name__ == "__main__":
-    # Check for required dependencies
-    try:
-        import pytesseract
-    except ImportError:
-        st.warning("⚠️ Tesseract OCR is not installed. EWP image processing may not work properly.")
-        st.info("Please install Tesseract OCR from: https://github.com/tesseract-ocr/tesseract")
-    
     main()
